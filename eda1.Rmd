@@ -1,0 +1,38 @@
+---
+title: "eda1"
+author: "Adam Chandler"
+date: "`r format(Sys.time(), '%d %B %Y %H:%M')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# load libraries
+
+library(tidyverse)
+library(stringr)
+library(ggthemes)
+library(lubridate)
+library(openxlsx)
+library(readxl)
+library(janitor)
+
+```
+
+```{r}
+# load data
+
+df <- read_rds("data/crdp_checked_collection.rds")
+glimpse(df)
+
+```
+
+```{r}
+
+
+```
+
