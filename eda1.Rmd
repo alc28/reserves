@@ -26,12 +26,87 @@ library(janitor)
 ```{r}
 # load data
 
-df <- read_rds("data/crdp_checked_collection.rds")
-glimpse(df)
+df_raw <- read_rds("data/crdp_checked_collection.rds")
+glimpse(df_raw)
+
+df <- df_raw %>%
+  mutate(p_has_use = ifelse(cirx == 0, 0, 1),
+         e_has_use = ifelse(clix == 0, 0, 1)) %>%
+  mutate(course_level = NA) %>%
+  mutate(course = as.integer(course)) %>%
+  mutate(course_level = case_when(course < 2000 ~ "1000",
+                                  course >= 2000 & course < 3000 ~ "2000",
+                                  course >= 3000 & course < 4000 ~ "3000",
+                                  course >= 4000 & course < 5000 ~ "4000",
+                                  course >= 5000 & course < 6000 ~ "5000",
+                                  course >= 6000 & course < 7000 ~ "6000",
+                                  course >= 7000 & course < 8000 ~ "7000",
+                                  course >= 8000 ~ "8000",
+                                  TRUE ~ "other")) %>%
+  mutate(semester_type = ifelse(str_detect(semester, "Fall"), "Fall", "Spring"))
+
+
+# df %>%
+#   count(semester_type)
+
+# mutate(patron_group = case_when(patron_group == "CU Graduate" ~ "Graduate",
+# patron_group == "CU Staff" ~ "Staff",
+# TRUE ~ patron_group)) %>%
+# df %>%
+#   count(course)
 
 ```
 
 ```{r}
+
+df %>%
+  count(semester)
+
+df %>%
+  count(dept)
+
+df %>%
+  count(lending_library)
+
+df %>%
+  count(item_format, document_type) %>%
+  filter(n > 30)
+
+df_sum_e <- df %>%
+  group_by(dept, semester_type, course_level, type_of_reserve, item_format) %>%
+  #group_by(dept, semester_type, course_level, type_of_reserve) %>%
+  summarize(n = n(),
+            prop_use = mean(e_has_use),
+            prop_users = mean(number_of_users)) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  filter(n > 10,
+         type_of_reserve == "E-Reserve")
+
+df_sum_p <- df %>%
+  group_by(dept, semester_type, course_level, type_of_reserve, item_format) %>%
+  #group_by(dept, semester_type, course_level, type_of_reserve) %>%
+  summarize(n = n(),
+            prop_use = mean(p_has_use),
+            prop_users = mean(number_of_users)) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  filter(n > 10,
+         type_of_reserve == "Physical Reserve")
+
+
+df_both <- bind_rows(df_sum_e, df_sum_p)
+
+df_both %>%
+  ggplot(aes(x = course_level, y = prop_use)) +
+  geom_boxplot() +
+  facet_wrap(~semester_type, ncol = 1)
+
+df_both %>%
+  ggplot(aes(x = course_level, y = prop_use, fill = semester_type)) +
+  geom_boxplot() +
+  facet_wrap(~type_of_reserve, ncol = 1) +
+  scale_y_continuous(labels = scales::percent)
+
+ggsave("output/course_level1.png", width = 9, height = 6)
 
 
 ```
