@@ -1,0 +1,152 @@
+---
+title: "eda1"
+author: "Adam Chandler"
+date: "`r format(Sys.time(), '%d %B %Y %H:%M')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# load libraries
+
+library(tidyverse)
+library(stringr)
+library(ggthemes)
+library(lubridate)
+library(openxlsx)
+library(readxl)
+library(janitor)
+library(infer)
+library(moderndive)
+
+```
+
+```{r}
+# load data
+
+df_raw <- read_rds("data/crdp_checked_collection.rds")
+glimpse(df_raw)
+
+df <- df_raw %>%
+  mutate(p_has_use = ifelse(cirx == 0, 0, 1),
+         e_has_use = ifelse(clix == 0, 0, 1)) %>%
+  mutate(course_level = NA) %>%
+  mutate(course = as.integer(course)) %>%
+  mutate(course_level = case_when(course < 2000 ~ "1000",
+                                  course >= 2000 & course < 3000 ~ "2000",
+                                  course >= 3000 & course < 4000 ~ "3000",
+                                  course >= 4000 & course < 5000 ~ "4000",
+                                  course >= 5000 & course < 6000 ~ "5000",
+                                  course >= 6000 & course < 7000 ~ "6000",
+                                  course >= 7000 & course < 8000 ~ "7000",
+                                  course >= 8000 ~ "8000",
+                                  TRUE ~ "other")) %>%
+  mutate(semester_type = ifelse(str_detect(semester, "Fall"), "Fall", "Spring"))
+
+
+departments <- read_excel("data/Depts.xlsx", 
+    sheet = "unique_depts", col_names = TRUE) %>%
+  clean_names() %>%
+  select(2:4)
+
+names(departments)[1] <- "dept"
+names(departments)[2] <- "dept_name"
+names(departments)[3] <- "area_of_study"
+  
+departments <- departments %>%
+  distinct()
+
+df_w_areas <- df %>%
+  left_join(departments, by = "dept") %>%
+  mutate(has_use = ifelse(type_of_reserve == "E-Reserve", e_has_use, p_has_use)) %>%
+  filter(!is.na(area_of_study))
+
+
+```
+
+
+
+```{r}
+
+get_bs <- function(df, numreps) {
+  
+  bootstrap_distribution <- df %>%
+    specify(response = "has_use") %>%
+    generate(reps = numreps, type = "bootstrap") %>%
+    calculate(stat = "mean") 
+
+  percentile_ci <- bootstrap_distribution %>%
+    get_confidence_interval(level = 0.95, type = "percentile")
+  
+  standard_error_ci <- bootstrap_distribution %>% 
+    get_confidence_interval(type = "se", point_estimate = mean(bootstrap_distribution$stat))
+  
+  return(standard_error_ci)
+}
+
+
+df_group_stats <- df_w_areas %>% 
+  group_by(area_of_study, type_of_reserve, course_level) %>%
+  summarize(n = n(),
+            prop_use = mean(has_use)) %>%
+  filter(n > 20) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  mutate(lower_ci = NA,
+         upper_ci = NA) %>%
+  ungroup
+
+numreps = 100
+for (i in 1:nrow(df_group_stats)) {
+  var_area_of_study <- as.character(df_group_stats[i,1])
+  var_type_of_reserve <- as.character(df_group_stats[i,2])
+  var_course_level <- as.character(df_group_stats[i,3])
+  df_subset <- df_w_areas %>%
+    filter(area_of_study == var_area_of_study,
+           type_of_reserve == var_type_of_reserve,
+           course_level == var_course_level) %>%
+    select(has_use)
+  
+  returned_ci <- get_bs(df_subset, numreps) %>%
+      mutate_if(is.numeric, round, digits = 2)
+  
+  df_group_stats[i,6] = as.numeric(unlist(returned_ci[[1]]))
+  df_group_stats[i,7] = as.numeric(unlist(returned_ci[[2]]))
+
+}
+
+```
+
+
+
+```{r}
+
+text_subtitle = "Electronic access consistently creates more value for students and faculty, broadly across and narrowly within disciplines\n"
+
+df_group_stats %>%
+  filter(!course_level == "8000") %>%
+  ggplot(aes(x = course_level, y = prop_use, color = type_of_reserve, group = type_of_reserve)) +
+  geom_errorbar(aes(ymin=lower_ci, ymax=upper_ci), width = 0.2, color = "black", position=position_dodge(width=0.4)) +
+  geom_point(position=position_dodge(width=0.4), size=2) +
+  facet_wrap(~area_of_study, ncol = 1) +
+  scale_y_continuous(labels = scales::percent, limits = c(0,1), breaks = seq(0,1.0, by = .2) ) +
+  labs(subtitle = "CUL course reserves use by area of study and format, 2016 - 2020",
+       title = str_wrap(text_subtitle, 80),
+       caption = "Error bars represent the 95% confidence interval. SOURCE: CUL Course Reserves Data Project",
+      x = "course level",
+      y = "percent of items on reserve that are used") +
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        plot.title = element_text(size = rel(2.0)),
+        plot.subtitle = element_text(size = rel(1)),
+        axis.text.x = element_text(size = rel(1.2)),
+        strip.text.x = element_text(size = rel(1.2))) 
+
+ggsave("output/course_level3.png", width = 12, height = 7)
+
+
+```
+

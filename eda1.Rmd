@@ -20,6 +20,8 @@ library(lubridate)
 library(openxlsx)
 library(readxl)
 library(janitor)
+library(infer)
+library(moderndive)
 
 ```
 
@@ -46,19 +48,21 @@ df <- df_raw %>%
   mutate(semester_type = ifelse(str_detect(semester, "Fall"), "Fall", "Spring"))
 
 
-# df %>%
-#   count(semester_type)
+departments <- read_excel("data/Depts.xlsx", 
+    sheet = "unique_depts", col_names = TRUE) %>%
+  clean_names() %>%
+  select(2:4)
 
-# mutate(patron_group = case_when(patron_group == "CU Graduate" ~ "Graduate",
-# patron_group == "CU Staff" ~ "Staff",
-# TRUE ~ patron_group)) %>%
-# df %>%
-#   count(course)
+names(departments)[1] <- "dept"
+names(departments)[2] <- "dept_name"
+names(departments)[3] <- "area_of_study"
+  
+departments <- departments %>%
+  distinct()
 
 ```
 
 ```{r}
-
 df %>%
   count(semester)
 
@@ -72,8 +76,12 @@ df %>%
   count(item_format, document_type) %>%
   filter(n > 30)
 
+df %>%
+  filter( !(p_has_use == 1 & e_has_use == 1) )
+
 df_sum_e <- df %>%
-  group_by(dept, semester_type, course_level, type_of_reserve, item_format) %>%
+  filter( !(p_has_use == 1 & e_has_use == 1) ) %>%
+    group_by(dept, semester_type, course_level, type_of_reserve, item_format) %>%
   #group_by(dept, semester_type, course_level, type_of_reserve) %>%
   summarize(n = n(),
             prop_use = mean(e_has_use),
@@ -83,6 +91,7 @@ df_sum_e <- df %>%
          type_of_reserve == "E-Reserve")
 
 df_sum_p <- df %>%
+  filter( !(p_has_use == 1 & e_has_use == 1) ) %>%
   group_by(dept, semester_type, course_level, type_of_reserve, item_format) %>%
   #group_by(dept, semester_type, course_level, type_of_reserve) %>%
   summarize(n = n(),
@@ -92,21 +101,152 @@ df_sum_p <- df %>%
   filter(n > 10,
          type_of_reserve == "Physical Reserve")
 
-
 df_both <- bind_rows(df_sum_e, df_sum_p)
 
-df_both %>%
-  ggplot(aes(x = course_level, y = prop_use)) +
-  geom_boxplot() +
-  facet_wrap(~semester_type, ncol = 1)
+df_both <- df_both %>%
+  left_join(departments, by = "dept")
 
 df_both %>%
-  ggplot(aes(x = course_level, y = prop_use, fill = semester_type)) +
-  geom_boxplot() +
-  facet_wrap(~type_of_reserve, ncol = 1) +
-  scale_y_continuous(labels = scales::percent)
+  group_by(area_of_study, type_of_reserve) %>%
+  count() %>%
+  View
 
-ggsave("output/course_level1.png", width = 9, height = 6)
+```
+
+
+```{r}
+
+text_subtitle = "Electronic access consistently creates more value for students and faculty, broadly across and narrowly within disciplines\n"
+
+df_both %>%
+  filter(!is.na(area_of_study)) %>%
+  filter(!str_detect(course_level, "8000")) %>%
+  ggplot(aes(x = course_level, y = prop_use, fill = type_of_reserve)) +
+  geom_boxplot(width = 0.3) +
+  facet_wrap(~area_of_study, ncol = 1) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "CUL course reserves use by area of study and format, 2016 - 2020",
+       subtitle = text_subtitle,
+      x = "course level",
+      y = "percent of items on reserve that are used") +
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        plot.title = element_text(size = rel(2.4)),
+        plot.subtitle = element_text(size = rel(1)),
+        axis.text.x = element_text(size = rel(1.2)),
+        strip.text.x = element_text(size = rel(1.2))) 
+
+ggsave("output/course_level2.png", width = 16, height = 9)
+
+
+```
+
+```{r}
+
+df_both %>%
+  glimpse()
+
+# pennies_sample %>% 
+#   specify(response = year)
+# percentile_ci <- bootstrap_distribution %>% 
+#   get_confidence_interval(level = 0.95, type = "percentile")
+# percentile_ci
+
+get_bs <- function(df, returntype, numreps) {
+  
+  bootstrap_distribution <- df %>%
+    specify(response = "prop_use") %>%
+    generate(reps = numreps, type = "bootstrap") %>%
+    calculate(stat = "mean") 
+
+  percentile_ci <- bootstrap_distribution %>%
+    get_confidence_interval(level = 0.95, type = "percentile")
+  percentile_ci
+  
+  standard_error_ci <- bootstrap_distribution %>% 
+    get_confidence_interval(type = "se", point_estimate = mean(bootstrap_distribution$stat))
+  standard_error_ci
+  
+}
+
+df_w_areas <- df %>%
+  left_join(departments, by = "dept") %>%
+  mutate(has_use = ifelse(type_of_reserve == "E-Reserve", e_has_use, p_has_use))
+
+df_w_areas %>% 
+  group_by(type_of_reserve, p_has_use) %>% 
+  summarize(count = n())
+
+df_w_areas %>% 
+  filter(!is.na(area_of_study)) %>%
+  filter(type_of_reserve == "E-Reserve") %>%
+  group_by(area_of_study, course_level) %>% 
+  summarize(count = n(),
+            mean = mean(e_has_use))
+
+df_w_areas %>% 
+  filter(!is.na(area_of_study)) %>%
+  filter(type_of_reserve == "Physical Reserve") %>%
+  filter(area_of_study == "Social & Behavioral Sciences") %>%
+  filter(course_level == "1000" ) %>%
+  specify(response = "p_has_use") %>%
+    generate(reps = 10, type = "bootstrap") %>%
+    calculate(stat = "mean") %>%
+  get_confidence_interval(type = "percentile", level = 0.95)
+  
+df_w_areas %>%
+  mutate(has_use = ifelse(type_of_reserve == "E-Reserve", e_has_use, p_has_use))
+  
+
+
+df_group_stats <- df_w_areas %>% 
+  filter(!is.na(area_of_study)) %>%
+  group_by(area_of_study, type_of_reserve, course_level) %>%
+  summarize(n = n(),
+            group_mean_e = mean(e_has_use),
+            group_mean_p = mean(p_has_use),
+            group_has_use = mean(has_use)) %>%
+  filter(n > 20) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  mutate(prop_use = NA) %>%
+  mutate(prop_use = ifelse(type_of_reserve == "E-Reserve", group_mean_e, group_mean_p)) %>%
+  select(-group_mean_e, -group_mean_p) %>%
+  ungroup
+
+for (i in 1:5) {
+  print(i)
+  #groupmean <- as.numeric(df_group_stats[i,5])
+  # send filter criteria to function to get rows as dataframe
+}
+
+```
+
+
+```{r}
+
+mythbusters_yawn %>%
+  specify(formula = yawn ~ group, success = "yes")
+
+df_w_areas %>%
+  filter(type_of_reserve == "E-Reserve") %>%
+  mutate(e_has_use = as.factor(e_has_use),
+         semester_type = as.factor(semester_type)) %>%
+  specify(formula = e_has_use ~ semester_type, success = "1") %>%
+  generate(reps = 100, type = "bootstrap") %>% 
+  calculate(stat = "diff in props", order = c("Fall", "Spring")) %>%
+  visualize() +
+  geom_vline(xintercept = 0)
+  
+
+df_w_areas %>%
+  filter(type_of_reserve == "Physical Reserve") %>%
+  mutate(p_has_use = as.factor(p_has_use),
+         semester_type = as.factor(semester_type)) %>%
+  specify(formula = p_has_use ~ semester_type, success = "1") %>%
+  generate(reps = 100, type = "bootstrap") %>% 
+  calculate(stat = "diff in props", order = c("Fall", "Spring")) %>%
+  visualize() +
+  geom_vline(xintercept = 0)
 
 
 ```
